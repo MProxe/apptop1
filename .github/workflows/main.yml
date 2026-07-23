@@ -1,364 +1,253 @@
-name: Build Android APK
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
+void main() {
+  runApp(const StaticRigApp());
+}
 
-permissions:
-  contents: write
-  actions: write
+class StaticRigApp extends StatelessWidget {
+  const StaticRigApp({super.key});
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Static Rig Force',
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: const Color(0xFF0A0A0A),
+        primaryColor: Colors.white,
+        colorScheme: const ColorScheme.dark(
+          surface: Color(0xFF141414),
+          primary: Colors.white,
+        ),
+      ),
+      home: const ForceMonitorScreen(),
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}
 
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+class ForceMonitorScreen extends StatefulWidget {
+  const ForceMonitorScreen({super.key});
 
-    - name: Set up Java
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '17'
+  @override
+  State<ForceMonitorScreen> createState() => _ForceMonitorScreenState();
+}
 
-    - name: Set up Flutter
-      uses: subosito/flutter-action@v2
-      with:
-        flutter-version: '3.19.6'
-        channel: 'stable'
+class _ForceMonitorScreenState extends State<ForceMonitorScreen> {
+  bool _isScanning = false;
+  List<ScanResult> _scanResults = [];
+  BluetoothDevice? _connectedDevice;
+  StreamSubscription<List<ScanResult>>? _scanSubscription;
+  
+  final List<FlSpot> _spots = [];
+  double _timeCounter = 0;
+  Timer? _mockTimer;
+  double _currentForce = 0.0;
+  double _peakForce = 0.0;
 
-    - name: Create Flutter Project Structure
-      run: |
-        flutter create . --org com.staticrig --project-name apptop1 --platforms=android
+  @override
+  void initState() {
+    super.initState();
+    _requestPermissionsAndInit();
+  }
 
-    - name: Force Compatible pubspec.yaml
-      run: |
-        cat << 'EOF' > pubspec.yaml
-        name: apptop1
-        description: "A brutalist force measurement utility."
-        publish_to: "none"
-        version: 1.0.0+1
+  void _requestPermissionsAndInit() async {
+    if (Platform.isAndroid) {
+      await [
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.location,
+      ].request();
+    }
+    
+    _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
+      setState(() {
+        _scanResults = results;
+      });
+    });
+  }
 
-        environment:
-          sdk: '>=3.3.0 <4.0.0'
+  void _startScan() async {
+    setState(() {
+      _isScanning = true;
+      _scanResults.clear();
+    });
+    
+    try {
+      if (Platform.isAndroid) {
+        await FlutterBluePlus.turnOn();
+      }
+      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 4));
+    } catch (e) {
+      debugPrint("Lỗi quét Bluetooth: $e");
+    }
+    
+    setState(() {
+      _isScanning = false;
+    });
+  }
 
-        dependencies:
-          flutter:
-            sdk: flutter
-          flutter_blue_plus: 1.32.1
-          fl_chart: 0.68.0
-
-        dev_dependencies:
-          flutter_test:
-            sdk: flutter
-          flutter_lints: ^3.0.0
-
-        flutter:
-          uses-material-design: true
-        EOF
-
-    - name: Inject Core App Code (UI & Bluetooth & Auto Permissions)
-      run: |
-        cat << 'EOF' > lib/main.dart
-        import 'dart:async';
-        import 'dart:io';
-        import 'package:flutter/material.dart';
-        import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-        import 'package:fl_chart/fl_chart.dart';
-        import 'package:permission_handler/permission_handler.dart';
-
-        void main() {
-          runApp(const StaticRigApp());
+  void _connectToDevice(BluetoothDevice device) async {
+    await FlutterBluePlus.stopScan();
+    setState(() {
+      _connectedDevice = device;
+    });
+    _mockTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      setState(() {
+        _timeCounter += 0.1;
+        _currentForce = 45.0 + (DateTime.now().millisecond % 35);
+        if (_currentForce > _peakForce) _peakForce = _currentForce;
+        
+        _spots.add(FlSpot(_timeCounter, _currentForce));
+        if (_spots.length > 50) {
+          _spots.removeAt(0);
         }
+      });
+    });
+  }
 
-        class StaticRigApp extends StatelessWidget {
-          const StaticRigApp({super.key});
+  void _disconnect() async {
+    _mockTimer?.cancel();
+    await _connectedDevice?.disconnect();
+    setState(() {
+      _connectedDevice = null;
+      _spots.clear();
+      _timeCounter = 0;
+      _peakForce = 0;
+    });
+  }
 
-          @override
-          Widget build(BuildContext context) {
-            return MaterialApp(
-              title: 'Static Rig Force',
-              theme: ThemeData.dark().copyWith(
-                scaffoldBackgroundColor: const Color(0xFF0A0A0A),
-                primaryColor: Colors.white,
-                colorScheme: const ColorScheme.dark(
-                  surface: Color(0xFF141414),
-                  primary: Colors.white,
-                ),
+  @override
+  void dispose() {
+    _mockTimer?.cancel();
+    _scanSubscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('STATIC RIG // FORCE MONITOR', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 16)),
+        backgroundColor: Colors.black,
+        elevation: 0,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF141414),
+                border: Border.all(color: Colors.white24),
               ),
-              home: const ForceMonitorScreen(),
-              debugShowCheckedModeBanner: false,
-            );
-          }
-        }
-
-        class ForceMonitorScreen extends StatefulWidget {
-          const ForceMonitorScreen({super.key});
-
-          @override
-          State<ForceMonitorScreen> createState() => _ForceMonitorScreenState();
-        }
-
-        class _ForceMonitorScreenState extends State<ForceMonitorScreen> {
-          bool _isScanning = false;
-          List<ScanResult> _scanResults = [];
-          BluetoothDevice? _connectedDevice;
-          StreamSubscription<List<ScanResult>>? _scanSubscription;
-          
-          final List<FlSpot> _spots = [];
-          double _timeCounter = 0;
-          Timer? _mockTimer;
-          double _currentForce = 0.0;
-          double _peakForce = 0.0;
-
-          @override
-          void initState() {
-            super.initState();
-            _requestPermissionsAndInit();
-          }
-
-          void _requestPermissionsAndInit() async {
-            if (Platform.isAndroid) {
-              await [
-                Permission.bluetoothScan,
-                Permission.bluetoothConnect,
-                Permission.location,
-              ].request();
-            }
-            
-            _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-              setState(() {
-                _scanResults = results;
-              });
-            });
-          }
-
-          void _startScan() async {
-            setState(() {
-              _isScanning = true;
-              _scanResults.clear();
-            });
-            
-            try {
-              // Bật Bluetooth tự động nếu đang tắt
-              if (Platform.isAndroid) {
-                await FlutterBluePlus.turnOn();
-              }
-              await FlutterBluePlus.startScan(timeout: const Duration(seconds: 4));
-            } catch (e) {
-              debugPrint("Lỗi quét Bluetooth: $e");
-            }
-            
-            setState(() {
-              _isScanning = false;
-            });
-          }
-
-          void _connectToDevice(BluetoothDevice device) async {
-            await FlutterBluePlus.stopScan();
-            setState(() {
-              _connectedDevice = device;
-            });
-            _mockTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
-              setState(() {
-                _timeCounter += 0.1;
-                _currentForce = 45.0 + (DateTime.now().millisecond % 35);
-                if (_currentForce > _peakForce) _peakForce = _currentForce;
-                
-                _spots.add(FlSpot(_timeCounter, _currentForce));
-                if (_spots.length > 50) {
-                  _spots.removeAt(0);
-                }
-              });
-            });
-          }
-
-          void _disconnect() async {
-            _mockTimer?.cancel();
-            await _connectedDevice?.disconnect();
-            setState(() {
-              _connectedDevice = null;
-              _spots.clear();
-              _timeCounter = 0;
-              _peakForce = 0;
-            });
-          }
-
-          @override
-          void dispose() {
-            _mockTimer?.cancel();
-            _scanSubscription?.cancel();
-            super.dispose();
-          }
-
-          @override
-          Widget build(BuildContext context) {
-            return Scaffold(
-              appBar: AppBar(
-                title: const Text('STATIC RIG // FORCE MONITOR', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 16)),
-                backgroundColor: Colors.black,
-                elevation: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _connectedDevice != null ? 'TRẠNG THÁI: ĐÃ KHỚP LỆNH' : 'TRẠNG THÁI: CHỜ TÍN HIỆU',
+                        style: TextStyle(color: _connectedDevice != null ? Colors.greenAccent : Colors.amberAccent, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(_connectedDevice != null ? _connectedDevice!.platformName : 'Chưa kết nối phần cứng', style: const TextStyle(color: Colors.white70)),
+                    ],
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
+                    onPressed: _connectedDevice == null ? _startScan : _disconnect,
+                    child: Text(_connectedDevice == null ? (_isScanning ? 'ĐANG QUÉT...' : 'QUÉT THIẾT BỊ') : 'NGẮT KẾT NỐI'),
+                  ),
+                ],
               ),
-              body: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF141414),
-                        border: Border.all(color: Colors.white24),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _connectedDevice != null ? 'TRẠNG THÁI: ĐÃ KHỚP LỆNH' : 'TRẠNG THÁI: CHỜ TÍN HIỆU',
-                                style: TextStyle(color: _connectedDevice != null ? Colors.greenAccent : Colors.amberAccent, fontWeight: FontWeight.bold),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(_connectedDevice != null ? _connectedDevice!.platformName : 'Chưa kết nối phần cứng', style: const TextStyle(color: Colors.white70)),
-                            ],
-                          ),
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
-                            onPressed: _connectedDevice == null ? _startScan : _disconnect,
-                            child: Text(_connectedDevice == null ? (_isScanning ? 'ĐANG QUÉT...' : 'QUÉT THIẾT BỊ') : 'NGẮT KẾT NỐI'),
-                          ),
-                        ],
-                      ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF141414), 
+                      border: Border.all(color: Colors.white24),
                     ),
-                    const SizedBox(height: 16),
-                    Row(
+                    child: Column(
                       children: [
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(color: const Color(0xFF141414), border: Border.all(color: Colors.white24)),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('LỰC HIỆN TẠI (KG)', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                const SizedBox(height: 8),
-                                Text(_currentForce.toStringAsFixed(1), style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: Colors.white)),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(color: const Color(0xFF141414), border: Border.all(color: Colors.white24)),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('ĐỈNH BẠO PHÁT (PEAK)', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                const SizedBox(height: 8),
-                                Text(_peakForce.toStringAsFixed(1), style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: Colors.redAccent)),
-                              ],
-                            ),
-                          ),
-                        ),
+                        const Text('LỰC HIỆN TẠI', style: TextStyle(fontSize: 12, color: Colors.white38)),
+                        Text('${_currentForce.toStringAsFixed(1)} kg', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      flex: 3,
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(color: const Color(0xFF141414), border: Border.all(color: Colors.white24)),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('BIỂU ĐỒ ÁP SUẤT TĨNH THỜI GIAN THỰC', style: TextStyle(color: Colors.grey, fontSize: 12, letterSpacing: 1)),
-                            const SizedBox(height: 16),
-                            Expanded(
-                              child: LineChart(
-                                LineChartData(
-                                  gridData: const FlGridData(show: true, drawVerticalLine: false),
-                                  titlesData: const FlTitlesData(show: false),
-                                  borderData: FlBorderData(show: false),
-                                  lineBarsData: [
-                                    LineChartBarData(
-                                      spots: _spots.isNotEmpty ? _spots : [const FlSpot(0, 0)],
-                                      isCurved: true,
-                                      color: Colors.white,
-                                      barWidth: 3,
-                                      dotData: const FlDotData(show: false),
-                                      belowBarData: BarAreaData(show: true, color: Colors.white.withOpacity(0.05)),
-                                    ),
-                                  ],
-                                  minY: 0,
-                                  maxY: 120,
-                                ),
-                              ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF141414), 
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text('LỰC ĐỈNH (PEAK)', style: TextStyle(fontSize: 12, color: Colors.white38)),
+                        Text('${_peakForce.toStringAsFixed(1)} kg', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.redAccent)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF141414),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: _connectedDevice == null && _scanResults.isNotEmpty
+                    ? ListView.builder(
+                        itemCount: _scanResults.length,
+                        itemBuilder: (context, index) {
+                          final r = _scanResults[index];
+                          final name = r.device.platformName.isNotEmpty ? r.device.platformName : "Thiết bị không tên";
+                          return ListTile(
+                            title: Text(name),
+                            subtitle: Text(r.device.remoteId.toString()),
+                            trailing: const Icon(Icons.bluetooth, color: Colors.white),
+                            onTap: () => _connectToDevice(r.device),
+                          );
+                        },
+                      )
+                    : LineChart(
+                        LineChartData(
+                          gridData: const FlGridData(show: true, drawVerticalLine: false),
+                          titlesData: const FlTitlesData(show: false),
+                          borderData: FlBorderData(show: false),
+                          lineBarsData: [
+                            LineChartBarData(
+                              spots: _spots.isEmpty ? [const FlSpot(0, 0)] : _spots,
+                              isCurved: true,
+                              color: Colors.white,
+                              barWidth: 3,
+                              dotData: const FlDotData(show: false),
                             ),
                           ],
                         ),
                       ),
-                    ),
-                    if (_connectedDevice == null && _scanResults.isNotEmpty)
-                      Expanded(
-                        flex: 2,
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(color: const Color(0xFF141414), border: Border.all(color: Colors.white24)),
-                          child: ListView.builder(
-                            itemCount: _scanResults.length,
-                            itemBuilder: (context, index) {
-                              final data = _scanResults[index];
-                              return ListTile(
-                                title: Text(data.device.platformName.isNotEmpty ? data.device.platformName : 'Thiết bị ẩn [BLE]', style: const TextStyle(color: Colors.white)),
-                                subtitle: Text(data.device.remoteId.toString(), style: const TextStyle(color: Colors.grey)),
-                                trailing: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.black),
-                                  onPressed: () => _connectToDevice(data.device),
-                                  child: const Text('KHỚP LỆNH'),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
               ),
-            );
-          }
-        }
-        EOF
-
-    - name: Inject Permission Handler in pubspec.yaml
-      run: |
-        sed -i '/dependencies:/a \  permission_handler: ^11.3.1' pubspec.yaml
-
-    - name: Inject Android Manifest Permissions
-      run: |
-        MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-        if [ -f "$MANIFEST_PATH" ]; then
-          sed -i '/<uses-permission android:name="android.permission.INTERNET"/a \    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>' "$MANIFEST_PATH"
-        fi
-
-    - name: Fix minSdkVersion for flutter_blue_plus
-      run: |
-        sed -i 's/minSdkVersion .*/minSdkVersion 21/g' android/app/build.gradle
-        sed -i 's/flutter.minSdkVersion=.*/flutter.minSdkVersion=21/g' android/local.properties || true
-
-    - name: Get Dependencies
-      run: flutter pub get
-
-    - name: Build APK
-      run: flutter build apk --release --no-tree-shake-icons
-
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-release
-        path: build/app/outputs/flutter-apk/app-release.apk
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
