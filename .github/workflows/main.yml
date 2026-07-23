@@ -60,7 +60,15 @@ jobs:
           uses-material-design: true
         EOF
 
-    - name: Inject Optimized Brutalist UI Code
+    - name: Inject Android Manifest Permissions
+      run: |
+        MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
+        if [ -f "$MANIFEST_PATH" ]; then
+          # Chèn quyền Bluetooth và Location trực tiếp vào file cấu hình gốc trước thẻ đóng ứng dụng
+          sed -i '/<application/a \    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.BLUETOOTH" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />' "$MANIFEST_PATH"
+        fi
+
+    - name: Inject Core App Code (UI & Bluetooth & Auto Permissions)
       run: |
         cat << 'EOF' > lib/main.dart
         import 'dart:async';
@@ -317,13 +325,6 @@ jobs:
           }
         }
         EOF
-
-    - name: Inject Android Manifest Permissions
-      run: |
-        MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-        if [ -f "$MANIFEST_PATH" ]; then
-          sed -i '/<uses-permission android:name="android.permission.INTERNET"/a \    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>' "$MANIFEST_PATH"
-        fi
 
     - name: Fix minSdkVersion for flutter_blue_plus
       run: |
