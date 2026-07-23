@@ -100,10 +100,11 @@ jobs:
         EOF
         fi
 
-    - name: Inject Core App Code (UI & Bluetooth & Auto Permissions)
+    - name: Inject Real BLE Data Stream App Code
       run: |
         cat << 'EOF' > lib/main.dart
         import 'dart:async';
+        import 'dart:convert';
         import 'dart:io';
         import 'package:flutter/material.dart';
         import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -147,10 +148,10 @@ jobs:
           List<ScanResult> _scanResults = [];
           BluetoothDevice? _connectedDevice;
           StreamSubscription<List<ScanResult>>? _scanSubscription;
+          StreamSubscription<List<int>>? _valueSubscription;
           
           final List<FlSpot> _spots = [];
           double _timeCounter = 0;
-          Timer? _mockTimer;
           double _currentForce = 0.0;
           double _peakForce = 0.0;
 
@@ -201,34 +202,56 @@ jobs:
             setState(() {
               _connectedDevice = device;
             });
-            _mockTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
-              setState(() {
-                _timeCounter += 0.1;
-                _currentForce = 45.0 + (DateTime.now().millisecond % 35);
-                if (_currentForce > _peakForce) _peakForce = _currentForce;
-                
-                _spots.add(FlSpot(_timeCounter, _currentForce));
-                if (_spots.length > 50) {
-                  _spots.removeAt(0);
+
+            try {
+              await device.connect();
+              List<BluetoothService> services = await device.discoverServices();
+              for (var service in services) {
+                if (service.uuid.toString() == "4fafc201-1fb5-459e-8fcc-c5c9c331914b") {
+                  for (var characteristic in service.characteristics) {
+                    if (characteristic.uuid.toString() == "beb5483e-36e1-4688-b7f5-ea07361b26a8") {
+                      await characteristic.setNotifyValue(true);
+                      _valueSubscription = characteristic.lastValueStream.listen((value) {
+                        if (value.isNotEmpty) {
+                          String decoded = utf8.decode(value);
+                          double? parsedForce = double.tryParse(decoded);
+                          if (parsedForce != null) {
+                            setState(() {
+                              _currentForce = parsedForce;
+                              if (_currentForce > _peakForce) _peakForce = _currentForce;
+                              _timeCounter += 0.1;
+                              _spots.add(FlSpot(_timeCounter, _currentForce));
+                              if (_spots.length > 50) {
+                                _spots.removeAt(0);
+                              }
+                            });
+                          }
+                        }
+                      });
+                    }
+                  }
                 }
-              });
-            });
+              }
+            } catch (e) {
+              debugPrint("Lỗi kết nối phần cứng: $e");
+            }
           }
 
           void _disconnect() async {
-            _mockTimer?.cancel();
+            _valueSubscription?.cancel();
             await _connectedDevice?.disconnect();
             setState(() {
               _connectedDevice = null;
               _spots.clear();
               _timeCounter = 0;
               _peakForce = 0;
+              _currentForce = 0;
             });
           }
 
           @override
           void dispose() {
-            _mockTimer?.cancel();
+            _valueSubscription?.cancel();
             _scanSubscription?.cancel();
             super.dispose();
           }
