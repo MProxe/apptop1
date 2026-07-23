@@ -5,6 +5,11 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+# SỬA LỖI 1: Cấp quyền cho GitHub Actions có thể upload file lên Artifacts
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,7 +19,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Java
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4 # Cập nhật lên v4 cho ổn định
       with:
         distribution: 'zulu'
         java-version: '17'
@@ -61,8 +66,9 @@ jobs:
     - name: Build APK
       run: flutter build apk --release --no-tree-shake-icons
 
+    # SỬA LỖI 2: Thay đổi đường dẫn lấy file APK linh hoạt hơn để tránh lỗi không tìm thấy file
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
         name: app-release
-        path: build/app/outputs/flutter-apk/app-release.apk
+        path: build/app/outputs/flutter-apk/*.apk
