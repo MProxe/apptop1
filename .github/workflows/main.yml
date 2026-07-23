@@ -59,13 +59,15 @@ jobs:
           uses-material-design: true
         EOF
 
-    - name: Inject Core App Code (UI & Bluetooth & Chart)
+    - name: Inject Core App Code (UI & Bluetooth & Auto Permissions)
       run: |
         cat << 'EOF' > lib/main.dart
         import 'dart:async';
+        import 'dart:io';
         import 'package:flutter/material.dart';
         import 'package:flutter_blue_plus/flutter_blue_plus.dart';
         import 'package:fl_chart/fl_chart.dart';
+        import 'package:permission_handler/permission_handler.dart';
 
         void main() {
           runApp(const StaticRigApp());
@@ -114,10 +116,18 @@ jobs:
           @override
           void initState() {
             super.initState();
-            _initBle();
+            _requestPermissionsAndInit();
           }
 
-          void _initBle() {
+          void _requestPermissionsAndInit() async {
+            if (Platform.isAndroid) {
+              await [
+                Permission.bluetoothScan,
+                Permission.bluetoothConnect,
+                Permission.location,
+              ].request();
+            }
+            
             _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
               setState(() {
                 _scanResults = results;
@@ -130,7 +140,17 @@ jobs:
               _isScanning = true;
               _scanResults.clear();
             });
-            await FlutterBluePlus.startScan(timeout: const Duration(seconds: 4));
+            
+            try {
+              // Bật Bluetooth tự động nếu đang tắt
+              if (Platform.isAndroid) {
+                await FlutterBluePlus.turnOn();
+              }
+              await FlutterBluePlus.startScan(timeout: const Duration(seconds: 4));
+            } catch (e) {
+              debugPrint("Lỗi quét Bluetooth: $e");
+            }
+            
             setState(() {
               _isScanning = false;
             });
@@ -314,6 +334,17 @@ jobs:
           }
         }
         EOF
+
+    - name: Inject Permission Handler in pubspec.yaml
+      run: |
+        sed -i '/dependencies:/a \  permission_handler: ^11.3.1' pubspec.yaml
+
+    - name: Inject Android Manifest Permissions
+      run: |
+        MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
+        if [ -f "$MANIFEST_PATH" ]; then
+          sed -i '/<uses-permission android:name="android.permission.INTERNET"/a \    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>' "$MANIFEST_PATH"
+        fi
 
     - name: Fix minSdkVersion for flutter_blue_plus
       run: |
