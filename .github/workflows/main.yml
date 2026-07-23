@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
     - name: Set up Java
       uses: actions/setup-java@v3
@@ -24,9 +25,9 @@ jobs:
         flutter-version: '3.19.x'
         channel: 'stable'
 
-    - name: Install Dependencies & Setup Config
+    - name: Initialize App & Add Packages
       run: |
-        flutter create . --platforms=android
+        flutter create --org com.staticrig --project-name apptop1 .
         flutter pub add flutter_blue_plus fl_chart
         flutter pub get
 
@@ -34,7 +35,7 @@ jobs:
       run: flutter build apk --release --no-tree-shake-icons
 
     - name: Upload APK Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: app-release
         path: build/app/outputs/flutter-apk/app-release.apk
