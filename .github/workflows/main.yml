@@ -225,3 +225,67 @@ jobs:
                               if (_currentForce > _peakForce) _peakForce = _currentForce;
                               _timeCounter += 0.1;
                               _spots.add(FlSpot(_timeCounter, _currentForce));
+                              if (_spots.length > 50) {
+                                _spots.removeAt(0);
+                              }
+                            });
+                          }
+                        }
+                      });
+                      await characteristic.setNotifyValue(true);
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              debugPrint("Lỗi kết nối phần cứng: $e");
+            }
+          }
+
+          void _disconnect() async {
+            _valueSubscription?.cancel();
+            await _connectedDevice?.disconnect();
+            setState(() {
+              _connectedDevice = null;
+              _spots.clear();
+              _timeCounter = 0;
+              _peakForce = 0;
+              _currentForce = 0;
+            });
+          }
+
+          @override
+          void dispose() {
+            _valueSubscription?.cancel();
+            _scanSubscription?.cancel();
+            super.dispose();
+          }
+
+          @override
+          Widget build(BuildContext context) {
+            return Scaffold(
+              appBar: AppBar(
+                title: const Text('STATIC RIG // FORCE MONITOR', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 2, fontSize: 16)),
+                backgroundColor: Colors.black,
+                elevation: 0,
+              ),
+              body: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF141414),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _connectedDevice != null ? 'TRẠNG THÁI: ĐÃ KHỚP LỆNH' : 'TRẠNG THÁI: CHỜ TÍN HIỆU',
+                                style: TextStyle
